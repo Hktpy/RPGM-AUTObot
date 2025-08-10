@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import json
 import os
 import time
-from typing import Deque, Iterable, List, Optional, Set, Tuple
+from typing import Deque, Dict, Iterable, List, Optional, Set, Tuple
+import logging
 
 
 @dataclass
@@ -19,39 +20,51 @@ class Perception:
     pos: Optional[Tuple[int, int]]
     interactables: List[Tuple[int, int, str]]
     screen_hash: Optional[int]
+    dialog_text: Optional[str] = None
 
 
 class Memory:
     """Persistent memory used by the autoplay agent."""
 
     visited_cells: Set[Tuple[int, int]]
-    used_interactables: Set[Tuple[int, int, str]]
+    used_interactables: Dict[Tuple[int, int, str], float]
     last_positions: Deque[Tuple[int, int]]
     last_progress_t: float
     seen_hashes: Deque[int]
+    recent_dialogs: Deque[str]
+    _prev_interactables: Set[Tuple[int, int, str]]
+    _missing_counts: Dict[Tuple[int, int, str], int]
 
     def __init__(self) -> None:
         self.visited_cells = set()
-        self.used_interactables = set()
+        self.used_interactables = {}
         self.last_positions = deque(maxlen=30)
         self.last_progress_t = time.time()
         self.seen_hashes = deque(maxlen=50)
+        self.recent_dialogs = deque(maxlen=5)
+        self._prev_interactables = set()
+        self._missing_counts = {}
+
+    def mark_progress(self, reason: str) -> None:
+        """Record that progress was made for ``reason`` and log it."""
+
+        logging.info("Progress: %s", reason)
+        self.last_progress_t = time.time()
 
     def mark_visited(self, pos: Tuple[int, int]) -> None:
         """Record that a map cell has been visited."""
 
         if pos not in self.visited_cells:
             self.visited_cells.add(pos)
-            self.last_progress_t = time.time()
+            self.mark_progress("visited new cell")
         self.last_positions.append(pos)
 
     def mark_used_interactable(self, x: int, y: int, t: str) -> None:
         """Record that an interactable object has been used."""
 
         item = (x, y, t)
-        if item not in self.used_interactables:
-            self.used_interactables.add(item)
-            self.last_progress_t = time.time()
+        self.used_interactables[item] = time.time()
+        self.mark_progress(f"used {t}")
 
     def is_stuck(self) -> bool:
         """Return True if recent movement stayed within a single cell."""
@@ -67,6 +80,31 @@ class Memory:
 
         return time.time() - self.last_progress_t > timeout_s
 
+    def update_progress(self, perception: Perception) -> None:
+        """Update internal trackers based on ``perception``."""
+
+        if perception.screen_hash is not None:
+            if perception.screen_hash not in list(self.seen_hashes)[-5:]:
+                self.mark_progress("screen hash changed")
+            self.seen_hashes.append(perception.screen_hash)
+
+        current = set(perception.interactables)
+        for inter in self._prev_interactables:
+            if inter not in current:
+                cnt = self._missing_counts.get(inter, 0) + 1
+                self._missing_counts[inter] = cnt
+                if cnt >= 2:
+                    self.mark_progress("interactable disappeared")
+                    self._missing_counts.pop(inter, None)
+            else:
+                self._missing_counts.pop(inter, None)
+        self._prev_interactables = current
+
+        if perception.dialog_text:
+            if perception.dialog_text not in self.recent_dialogs:
+                self.mark_progress("new dialog text")
+            self.recent_dialogs.append(perception.dialog_text)
+
     # ------------------------------------------------------------------
     def save(self, path: str) -> None:
         """Persist memory state to ``path`` in JSON format."""
@@ -76,10 +114,13 @@ class Memory:
 
         data = {
             "visited_cells": _compact_cells(self.visited_cells),
-            "used_interactables": list(self.used_interactables),
+            "used_interactables": [
+                [x, y, t, ts] for (x, y, t), ts in self.used_interactables.items()
+            ],
             "last_positions": list(self.last_positions),
             "last_progress_t": self.last_progress_t,
             "seen_hashes": list(self.seen_hashes),
+            "recent_dialogs": list(self.recent_dialogs),
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -94,10 +135,13 @@ class Memory:
 
         mem = cls()
         mem.visited_cells = _expand_cells(data.get("visited_cells", []))
-        mem.used_interactables = {tuple(x) for x in data.get("used_interactables", [])}
+        mem.used_interactables = {
+            (x, y, t): ts for x, y, t, ts in data.get("used_interactables", [])
+        }
         mem.last_positions = deque((tuple(p) for p in data.get("last_positions", [])), maxlen=30)
         mem.last_progress_t = data.get("last_progress_t", time.time())
         mem.seen_hashes = deque(data.get("seen_hashes", []), maxlen=50)
+        mem.recent_dialogs = deque(data.get("recent_dialogs", []), maxlen=5)
         return mem
 
 

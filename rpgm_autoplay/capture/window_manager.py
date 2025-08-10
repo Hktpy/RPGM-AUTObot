@@ -92,6 +92,24 @@ class GameWindow:
         rgb = arr[:, :, :3][:, :, ::-1]
         return rgb
 
+    def screenshot_region(self, region: Tuple[int, int, int, int]):  # -> np.ndarray
+        """Capture a sub-region of the window relative to its top-left."""
+
+        try:
+            import numpy as np
+            import mss
+        except Exception as exc:  # pragma: no cover - dependency error
+            raise RuntimeError("mss and numpy are required for screenshots") from exc
+
+        bx, by, _, _ = self.bbox()
+        rx, ry, w, h = region
+        with mss.mss() as sct:
+            img = sct.grab({"left": bx + rx, "top": by + ry, "width": w, "height": h})
+
+        arr = np.array(img, dtype=np.uint8)
+        rgb = arr[:, :, :3][:, :, ::-1]
+        return rgb
+
 
 __all__ = ["GameWindow", "WindowNotFoundError"]
 

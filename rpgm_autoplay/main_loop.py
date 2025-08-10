@@ -56,6 +56,9 @@ class Runner:
         self.agent = Agent(self.memory, wall_hand=wall_hand)
         self.input = InputDriver()
         self.nav = Navigator(self.input, self.memory)
+        self._ocr_every = 1
+        self._ocr_tick = 0
+        self.timings: Dict[str, float] = {}
 
         log_path = os.path.join(self.snapshot_dir or ".", "autoplay.log")
         handlers = [logging.StreamHandler(), RotatingFileHandler(log_path, maxBytes=10_000_000, backupCount=3)]
@@ -94,22 +97,68 @@ class Runner:
     def step(self, dry_run: bool = False) -> Tuple[Perception, Dict, object]:
         """Perform a single cycle of capture → perception → policy → action."""
 
+        t0 = time.perf_counter()
         screenshot = self.window.screenshot()
+        t1 = time.perf_counter()
+
+        dialog_present = False
+        dialog_text = None
+        choices: list[str] = []
+        if self._ocr_tick % self._ocr_every == 0:
+            ocr_start = time.perf_counter()
+            dialog_present = self.reader.detect_dialog(screenshot)
+            if dialog_present:
+                dialog_text = self.reader.read_dialog_text(screenshot)
+                if dialog_text is None:
+                    h, w = screenshot.shape[:2]
+                    y1 = int(h * self.reader.dialog_roi[0]) - self.reader.margin
+                    y2 = int(h * self.reader.dialog_roi[1]) + self.reader.margin
+                    x1 = self.reader.margin
+                    x2 = w - self.reader.margin
+                    roi = (max(0, x1), max(0, y1), max(0, x2 - x1), max(0, y2 - y1))
+                    dialog_img = self.window.screenshot_region(roi)
+                    dialog_text = self.reader.read_full(dialog_img) or None
+            choices = self.reader.detect_choices(screenshot) if dialog_present else []
+            t2 = time.perf_counter()
+            ocr_t = t2 - ocr_start
+        else:
+            t2 = time.perf_counter()
+            ocr_t = 0.0
+
+        cv_start = time.perf_counter()
         perception = Perception(
-            in_dialog=self.reader.detect_dialog(screenshot),
-            choices=self.reader.detect_choices(screenshot),
+            in_dialog=dialog_present,
+            choices=choices,
             pos=self.analyzer.locate_player(screenshot),
             interactables=self.analyzer.find_interactables(screenshot),
             screen_hash=self.analyzer.screen_hash(screenshot),
+            dialog_text=dialog_text,
         )
-        self.memory.seen_hashes.append(perception.screen_hash)
+        cv_end = time.perf_counter()
+        self.memory.update_progress(perception)
 
+        policy_start = time.perf_counter()
         action = self.agent.next_action(perception)
+        t4 = time.perf_counter()
+
         logging.info("Perception: %s", perception)
         logging.info("Action: %s", action)
 
+        control_t = 0.0
         if not dry_run:
+            ctrl_start = time.perf_counter()
             self._execute(action)
+            control_t = time.perf_counter() - ctrl_start
+
+        self.timings = {
+            "capture": t1 - t0,
+            "ocr": ocr_t,
+            "cv": cv_end - cv_start,
+            "policy": t4 - policy_start,
+            "control": control_t,
+        }
+        logging.debug("Timings: %s", self.timings)
+        self._ocr_tick += 1
         return perception, action, screenshot
 
     # ------------------------------------------------------------------
@@ -147,6 +196,9 @@ class Runner:
                     self._last_snapshot_t = now
 
                 elapsed = time.perf_counter() - start
+                fps = 1 / elapsed if elapsed > 0 else 0.0
+                self._ocr_every = 3 if fps < 6 else 1
+                logging.debug("FPS %.2f OCR every %d", fps, self._ocr_every)
                 time.sleep(max(0.0, target_dt - elapsed))
         finally:
             if self._memory_path:

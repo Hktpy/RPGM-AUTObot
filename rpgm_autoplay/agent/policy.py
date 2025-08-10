@@ -61,6 +61,7 @@ class Agent:
     def __init__(self, memory: Memory, wall_hand: str = "right") -> None:
         self.memory = memory
         self.wall_hand = wall_hand
+        self._last_unstuck_t = 0.0
 
     # ------------------------------------------------------------------
     def _choice_score(self, text: str) -> int:
@@ -109,20 +110,35 @@ class Agent:
             self.memory.last_progress_t = time.time()
             return {"type": "SELECT_CHOICE", "index": idx}
 
-        # 3. Nearby unused interactable.
+        # 3. Nearby interactable – prioritise doors not visited recently.
         if perception.pos is not None:
             px, py = perception.pos
-            for x, y, t in perception.interactables:
-                if (x, y, t) in self.memory.used_interactables:
-                    continue
+            doors = [i for i in perception.interactables if i[2] == "door"]
+            doors.sort(key=lambda d: self.memory.used_interactables.get(d, 0.0))
+            for x, y, t in doors:
                 if abs(px - x) + abs(py - y) <= 1:
                     self.memory.mark_used_interactable(x, y, t)
-                    return {
-                        "type": "MOVE_AND_INTERACT",
-                        "target": (x, y, t),
-                    }
+                    return {"type": "MOVE_AND_INTERACT", "target": (x, y, t)}
+            for x, y, t in perception.interactables:
+                last = self.memory.used_interactables.get((x, y, t), 0.0)
+                if abs(px - x) + abs(py - y) <= 1 and time.time() - last > 5:
+                    self.memory.mark_used_interactable(x, y, t)
+                    return {"type": "MOVE_AND_INTERACT", "target": (x, y, t)}
 
-        # 4. Stuck detection – perform an unstuck sequence.
+        # 4. Fallback when no progress for 45 seconds – periodic unstuck.
+        if self.memory.no_progress(45) and time.time() - self._last_unstuck_t > 10:
+            self._last_unstuck_t = time.time()
+            return {
+                "type": "UNSTUCK_SEQ",
+                "sequence": [
+                    "MOVE_UP",
+                    "MOVE_RIGHT",
+                    "MOVE_DOWN",
+                    "MOVE_LEFT",
+                ],
+            }
+
+        # 5. Stuck detection – perform an unstuck sequence.
         if self.memory.is_stuck():
             return {
                 "type": "UNSTUCK_SEQ",
@@ -134,7 +150,7 @@ class Agent:
                 ],
             }
 
-        # 5. Default exploration behaviour using wall following.
+        # 6. Default exploration behaviour using wall following.
         return {"type": "EXPLORE_WALLFOLLOW", "hand": self.wall_hand}
 
 
