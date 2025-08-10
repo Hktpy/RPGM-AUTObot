@@ -5,6 +5,9 @@
 mss
 PyGetWindow
 
+# Input control
+pynput
+
 # Array operations
 numpy
 
