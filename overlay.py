@@ -61,5 +61,4 @@ class HUD(QtWidgets.QMainWindow):
         qimg = QtGui.QImage(disp.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
         pix = QtGui.QPixmap.fromImage(qimg)
         self.label.setPixmap(pix)
-        self.info.setPlainText("
-".join(lines))
+        self.info.setPlainText("\n".join(lines))
