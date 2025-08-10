@@ -7,3 +7,8 @@ PyGetWindow
 
 # Array operations
 numpy
+
+# OCR utilities
+opencv-python-headless
+pytesseract
+pillow
