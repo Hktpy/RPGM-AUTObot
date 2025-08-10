@@ -93,6 +93,30 @@ class MacWindowCapture:
         rgb = np.dstack((r, g, b))
         return rgb
 
+    def grab_rect(self, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+        x, y, w, h = bbox
+        rect = Q.CGRectMake(x, y, w, h)
+        cgimg = Q.CGWindowListCreateImage(
+            rect,
+            Q.kCGWindowListOptionIncludingWindow,
+            self.window_id,
+            Q.kCGWindowImageDefault
+        )
+        if not cgimg:
+            raise RuntimeError("CGWindowListCreateImage failed")
+        width = Q.CGImageGetWidth(cgimg)
+        height = Q.CGImageGetHeight(cgimg)
+        provider = Q.CGImageGetDataProvider(cgimg)
+        data = Q.CGDataProviderCopyData(provider)
+        buf = bytes(data)
+        rowbytes = Q.CGImageGetBytesPerRow(cgimg)
+        arr = np.frombuffer(buf, dtype=np.uint8)
+        arr = arr.reshape((height, rowbytes // 4, 4))
+        arr = arr[:, :width, :]
+        b, g, r, a = arr[..., 0], arr[..., 1], arr[..., 2], arr[..., 3]
+        rgb = np.dstack((r, g, b))
+        return rgb
+
 class ScreenCapture:
     def __init__(self, bbox: Optional[Tuple[int,int,int,int]] = None):
         self.sct = mss.mss()
@@ -103,6 +127,11 @@ class ScreenCapture:
         else:
             mon = self.sct.monitors[1]
         img = self.sct.grab(mon)
-        from PIL import Image
+        arr = np.array(Image.frombytes("RGB", (img.width, img.height), img.rgb))
+        return arr
+
+    def grab_rect(self, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+        mon = {"left": bbox[0], "top": bbox[1], "width": bbox[2], "height": bbox[3]}
+        img = self.sct.grab(mon)
         arr = np.array(Image.frombytes("RGB", (img.width, img.height), img.rgb))
         return arr
