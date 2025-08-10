@@ -95,6 +95,8 @@ def main():
     frame_i = 0
     t_prev = time.perf_counter()
     target_dt = 1.0 / cfg.max_fps
+    base_ocr_every = cfg.ocr_every
+    ocr_every = base_ocr_every
 
     log_line({"event": "start", "capture": used, "langs": "+".join(cfg.langs or ["eng"])}, cfg.log_json)
 
@@ -110,7 +112,11 @@ def main():
 
     while True:
         t0 = time.perf_counter()
+        timings = {}
+
+        t_cap = time.perf_counter()
         frame = cap.grab()
+        timings["capture"] = time.perf_counter() - t_cap
         if ref_shape is None:
             ref_shape = frame.shape[:2]
         elif frame.shape[:2] != ref_shape:
@@ -123,12 +129,26 @@ def main():
         dt = t0 - t_prev
         t_prev = t0
 
+        t_cv = time.perf_counter()
         blocked_s = update_blocked_seconds(prev, frame, blocked_s, dt, 0.995)
         hint = map_hint(frame)
+        timings["cv"] = time.perf_counter() - t_cv
 
         dialog_text, menu_options, boxes = (None, [], [])
-        if frame_i % cfg.ocr_every == 0:
+        if frame_i % ocr_every == 0:
+            t_ocr = time.perf_counter()
             dialog_text, menu_options, boxes = extract_dialog_and_menu(frame, cfg.tess_lang_str())
+            if dialog_text is None and not menu_options and boxes and hasattr(cap, "grab_rect"):
+                box = boxes[0]
+                info = get_window_info(args.window_id) if args.window_id else None
+                ref_bbox = info["bbox"] if info and info.get("bbox") else bbox_ref
+                gx = ref_bbox[0] + box[0]
+                gy = ref_bbox[1] + box[1]
+                retry_frame = cap.grab_rect((gx, gy, box[2], box[3]))
+                dialog_text, menu_options, _ = extract_dialog_and_menu(retry_frame, cfg.tess_lang_str())
+            timings["ocr"] = time.perf_counter() - t_ocr
+        else:
+            timings["ocr"] = 0.0
 
         state = {
             "dialog_text": dialog_text,
@@ -138,28 +158,44 @@ def main():
             "last_actions": last_actions[-2:],
         }
 
+        t_pol = time.perf_counter()
         if blocked_s >= cfg.unblock_after_s:
             action, reason = next(unb), "unblock pattern"
         else:
             out = decide_action(state, last_actions)
             action, reason = out["action"], out.get("reason", "")
+        timings["policy"] = time.perf_counter() - t_pol
 
-        event = {"t": time.time(), "state": state, "decision": {"action": action, "reason": reason}}
-        log_line(event if cfg.log_json else f"{event}", cfg.log_json)
-
+        t_ctrl = time.perf_counter()
         if not cfg.dry_run and limiter.allow():
             sender.send(action)
             last_actions.append(action)
             last_actions = last_actions[-10:]
+        timings["control"] = time.perf_counter() - t_ctrl
+
+        elapsed = max(1e-6, time.perf_counter() - t0)
+        fps = 1.0 / elapsed
+        if fps < 6 and ocr_every == base_ocr_every:
+            ocr_every = base_ocr_every * 3
+        elif fps >= 6 and ocr_every != base_ocr_every:
+            ocr_every = base_ocr_every
 
         if hud is not None:
-            elapsed = max(1e-6, time.perf_counter() - t0); fps = 1.0 / elapsed
             info = get_window_info(args.window_id) if args.window_id else None
             if info and info.get("bbox"):
                 hud.move_to_bbox(info["bbox"])
             hud.update_view(frame, boxes, state, {"action": action, "reason": reason}, fps)
             from PySide6 import QtWidgets
             QtWidgets.QApplication.processEvents()
+
+        event = {
+            "t": time.time(),
+            "state": state,
+            "decision": {"action": action, "reason": reason},
+            "timings": {k: round(v, 4) for k, v in timings.items()},
+            "fps": round(fps, 2),
+        }
+        log_line(event if cfg.log_json else f"{event}", cfg.log_json)
 
         prev = frame
         time.sleep(max(0.0, target_dt - (time.perf_counter() - t0)))
