@@ -35,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="right",
         help="Wall-following hand for exploration",
     )
+    parser.add_argument(
+        "--snapshot-dir",
+        default=None,
+        help="Directory to save 1 FPS snapshots and perception JSON",
+    )
     return parser
 
 
@@ -51,6 +56,7 @@ def main() -> None:
         langs=args.lang,
         wall_hand=args.wall_hand,
         debug=args.debug,
+        snapshot_dir=args.snapshot_dir,
     )
     runner.run(dry_run=args.dry_run)
 

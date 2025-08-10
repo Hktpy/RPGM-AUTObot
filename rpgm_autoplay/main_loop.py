@@ -6,9 +6,15 @@ This module implements the high level runner driving the capture → perception
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
+from dataclasses import asdict
+from logging.handlers import RotatingFileHandler
 from typing import Dict, Tuple
+
+import cv2
 
 from .capture.window_manager import GameWindow
 from .ocr.text_reader import TextReader
@@ -29,18 +35,34 @@ class Runner:
         langs: str = "eng+jpn",
         wall_hand: str = "right",
         debug: bool = False,
+        snapshot_dir: str | None = None,
     ) -> None:
         self.window = GameWindow(window_name)
         self.reader = TextReader(langs=langs)
         self.analyzer = SceneAnalyzer()
-        self.memory = Memory()
+        self.snapshot_dir = snapshot_dir
+        self._last_snapshot_t = 0.0
+        self._snapshot_idx = 0
+        if self.snapshot_dir:
+            os.makedirs(self.snapshot_dir, exist_ok=True)
+            self._memory_path = os.path.join(self.snapshot_dir, "memory.json")
+            if os.path.exists(self._memory_path):
+                self.memory = Memory.load(self._memory_path)
+            else:
+                self.memory = Memory()
+        else:
+            self._memory_path = None
+            self.memory = Memory()
         self.agent = Agent(self.memory, wall_hand=wall_hand)
         self.input = InputDriver()
         self.nav = Navigator(self.input, self.memory)
 
+        log_path = os.path.join(self.snapshot_dir or ".", "autoplay.log")
+        handlers = [logging.StreamHandler(), RotatingFileHandler(log_path, maxBytes=10_000_000, backupCount=3)]
         logging.basicConfig(
             level=logging.INFO if debug else logging.WARNING,
             format="%(asctime)s %(levelname)s %(message)s",
+            handlers=handlers,
         )
 
     # ------------------------------------------------------------------
@@ -69,7 +91,7 @@ class Runner:
             logging.warning("Unknown action type: %s", kind)
 
     # ------------------------------------------------------------------
-    def step(self, dry_run: bool = False) -> Tuple[Perception, Dict]:
+    def step(self, dry_run: bool = False) -> Tuple[Perception, Dict, object]:
         """Perform a single cycle of capture → perception → policy → action."""
 
         screenshot = self.window.screenshot()
@@ -88,24 +110,47 @@ class Runner:
 
         if not dry_run:
             self._execute(action)
-        return perception, action
+        return perception, action, screenshot
 
     # ------------------------------------------------------------------
     def run(self, dry_run: bool = False) -> None:
         """Run the main loop at approximately 10–15 Hz."""
 
         target_dt = 1 / 12  # ≈12 Hz
-        while True:
-            start = time.perf_counter()
-            try:
-                self.step(dry_run=dry_run)
-            except KeyboardInterrupt:
-                logging.info("Runner stopped by user")
-                break
-            except Exception:
-                logging.exception("Error during step")
-            elapsed = time.perf_counter() - start
-            time.sleep(max(0.0, target_dt - elapsed))
+        try:
+            while True:
+                start = time.perf_counter()
+                try:
+                    perception, action, screenshot = self.step(dry_run=dry_run)
+                except KeyboardInterrupt:
+                    logging.info("Runner stopped by user")
+                    break
+                except Exception:
+                    logging.exception("Error during step")
+                    perception, action, screenshot = None, None, None
+
+                now = time.time()
+                if (
+                    self.snapshot_dir
+                    and screenshot is not None
+                    and now - self._last_snapshot_t >= 1.0
+                ):
+                    fname = os.path.join(
+                        self.snapshot_dir, f"{int(now)}_{self._snapshot_idx:05d}"
+                    )
+                    cv2.imwrite(fname + ".png", screenshot[:, :, ::-1])
+                    with open(fname + ".json", "w", encoding="utf-8") as f:
+                        json.dump(asdict(perception), f)
+                    if self._memory_path:
+                        self.memory.save(self._memory_path)
+                    self._snapshot_idx += 1
+                    self._last_snapshot_t = now
+
+                elapsed = time.perf_counter() - start
+                time.sleep(max(0.0, target_dt - elapsed))
+        finally:
+            if self._memory_path:
+                self.memory.save(self._memory_path)
 
 
 __all__ = ["Runner"]
