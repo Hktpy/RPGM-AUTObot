@@ -1,3 +1,9 @@
 # Project dependencies for rpgm_autoplay
 # Python 3.11 on macOS ARM64
-# TODO: Specify actual third-party packages.
+
+# Window capture and manipulation
+mss
+PyGetWindow
+
+# Array operations
+numpy
