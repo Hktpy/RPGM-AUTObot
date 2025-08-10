@@ -3,17 +3,17 @@ from typing import List
 import numpy as np
 import cv2
 
-from .config import Config
-from .capture import ScreenCapture, MacWindowCapture, find_window_by_keyword, debug_windows, get_window_info
-from .ocr import extract_dialog_and_menu
-from .perception import update_blocked_seconds, map_hint
-from .policy import decide_action
-from .actions import ActionSender
-from .unblock import routine
-from .utils import RateLimiter, log_line
+from config import Config
+from capture import ScreenCapture, MacWindowCapture, find_window_by_keyword, debug_windows, get_window_info
+from ocr import extract_dialog_and_menu
+from perception import update_blocked_seconds, map_hint
+from policy import decide_action
+from actions import ActionSender
+from unblock import routine
+from utils import RateLimiter, log_line
 
 try:
-    from .overlay import HUD
+    from overlay import HUD
     HAVE_HUD = True
 except Exception:
     HAVE_HUD = False
