@@ -22,17 +22,24 @@ from .control.navigation import Navigator
 class Runner:
     """Drive the main capture/decision/action loop."""
 
-    def __init__(self, window_name: str = "rmmz-game") -> None:
+    def __init__(
+        self,
+        window_name: str = "rmmz-game",
+        *,
+        langs: str = "eng+jpn",
+        wall_hand: str = "right",
+        debug: bool = False,
+    ) -> None:
         self.window = GameWindow(window_name)
-        self.reader = TextReader()
+        self.reader = TextReader(langs=langs)
         self.analyzer = SceneAnalyzer()
         self.memory = Memory()
-        self.agent = Agent(self.memory)
+        self.agent = Agent(self.memory, wall_hand=wall_hand)
         self.input = InputDriver()
         self.nav = Navigator(self.input, self.memory)
 
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.INFO if debug else logging.WARNING,
             format="%(asctime)s %(levelname)s %(message)s",
         )
 
