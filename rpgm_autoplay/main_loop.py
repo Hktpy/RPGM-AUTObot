@@ -95,14 +95,19 @@ class Runner:
         """Perform a single cycle of capture → perception → policy → action."""
 
         screenshot = self.window.screenshot()
+        dialog_present = self.reader.detect_dialog(screenshot)
+        dialog_text = (
+            self.reader.read_dialog_text(screenshot) if dialog_present else None
+        )
         perception = Perception(
-            in_dialog=self.reader.detect_dialog(screenshot),
+            in_dialog=dialog_present,
             choices=self.reader.detect_choices(screenshot),
             pos=self.analyzer.locate_player(screenshot),
             interactables=self.analyzer.find_interactables(screenshot),
             screen_hash=self.analyzer.screen_hash(screenshot),
+            dialog_text=dialog_text,
         )
-        self.memory.seen_hashes.append(perception.screen_hash)
+        self.memory.update_progress(perception)
 
         action = self.agent.next_action(perception)
         logging.info("Perception: %s", perception)

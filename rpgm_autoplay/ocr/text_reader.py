@@ -115,6 +115,18 @@ class TextReader:
         cleaned = re.sub(r"[^0-9A-Za-z\u3040-\u30ff\u4e00-\u9fff]", "", text)
         return len(cleaned) >= self.dialog_min_chars
 
+    def read_dialog_text(self, img: np.ndarray) -> str:
+        """Return OCR text from the dialogue region."""
+
+        h, w = img.shape[:2]
+        y1 = int(h * self.dialog_roi[0]) - self.margin
+        y2 = int(h * self.dialog_roi[1]) + self.margin
+        x1 = self.margin
+        x2 = w - self.margin
+        roi = img[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
+        pre = self._preprocess(roi)
+        return self._ocr(pre)
+
     def detect_choices(self, img: np.ndarray) -> List[str]:
         """Detect a list of choice strings from the image.
 
