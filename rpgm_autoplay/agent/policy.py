@@ -58,8 +58,9 @@ STORY_KEYWORDS: Dict[str, set[str]] = {
 class Agent:
     """Simple deterministic agent policy."""
 
-    def __init__(self, memory: Memory) -> None:
+    def __init__(self, memory: Memory, wall_hand: str = "right") -> None:
         self.memory = memory
+        self.wall_hand = wall_hand
 
     # ------------------------------------------------------------------
     def _choice_score(self, text: str) -> int:
@@ -134,7 +135,7 @@ class Agent:
             }
 
         # 5. Default exploration behaviour using wall following.
-        return {"type": "EXPLORE_WALLFOLLOW", "hand": "right"}
+        return {"type": "EXPLORE_WALLFOLLOW", "hand": self.wall_hand}
 
 
 __all__ = ["Agent", "STORY_KEYWORDS"]
